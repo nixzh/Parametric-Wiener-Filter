@@ -1,0 +1,176 @@
+#include <opencv2/opencv.hpp>
+#include <iostream>
+#include<math.h>
+
+using namespace std;
+using namespace cv;
+
+int main()
+{
+	void wiener(Mat img1, Mat img2, double k);
+	char w[100];
+	double e = 2.718281828459045;
+    double pi=3.1415926;
+	cout << "请输入图片路径：" << endl;
+	cin.getline(w, 100);
+	Mat img = imread(w, 0);//获取图片灰度值
+	if (img.empty())
+	{
+		do
+		{
+			cout << "找不到图片，请再次输入图片路径：" << endl;
+			cin.getline(w, 20);
+			img = imread(w, 0);//获取图片灰度值
+		} while (img.empty());
+	}
+
+	//中心化
+	Mat img0(img.rows, img.cols, CV_32FC1);
+	for (int i = 0; i < img0.rows; i++)
+	{
+		for (int j = 0; j < img0.cols; j++)
+		{
+			img0.at<float>(i, j) = img.at<uchar>(i, j) * pow(-1, i + j);
+
+		}
+	}
+	
+	//DFT变换
+	Mat mid[] = { Mat_<float>(img0), Mat::zeros(img0.size(), CV_32F) };//增加一个装初始化为0的频域通道
+	Mat img1;
+	merge(mid, 2, img1);//用merge将通道合并
+
+	dft(img1, img1);            // 离散傅里叶变换
+	//退化函数
+	float a = 0.1, b = 0.1, T = 1;
+	Mat h(img.size(),CV_32FC2);
+	for (int p = 0; p < h.rows; p++)
+	{
+		for (int q = 0; q < h.cols; q++)
+		{
+			float f = (-img.rows / 2) + p;
+			float g = (-img.cols / 2 ) + q;
+			float x = pi*(f*a + g*b);
+
+			if (x == 0)
+			{
+				h.at<Vec2f>(p, q)[0] = 1;
+				h.at<Vec2f>(p, q)[1] = 0;
+			}
+			else
+			{
+				h.at<Vec2f>(p, q)[0] = T*0.5*sin(2 * x)/x;
+				h.at<Vec2f>(p, q)[1] = -T*pow(sin(x),2)/x; 
+			}
+
+		}
+	}
+
+	for (int m = 0; m < img.rows; m++)
+	{
+		for (int n = 0; n < img.cols; n++)
+		{
+			img1.at<Vec2f>(m, n)[0] = img1.at<Vec2f>(m, n)[0] * h.at<Vec2f>(m, n)[0] - img1.at<Vec2f>(m, n)[1] * h.at<Vec2f>(m, n)[1];
+			img1.at<Vec2f>(m, n)[1] = img1.at<Vec2f>(m, n)[0] * h.at<Vec2f>(m, n)[1] + img1.at<Vec2f>(m, n)[1] * h.at<Vec2f>(m, n)[0];
+		}
+	}
+	//傅里叶逆变换
+	idft(img1, img1);
+	split(img1, mid);
+    Mat img2 = mid[0];
+	for (int i = 0; i < img2.rows; i++)
+	{
+		for (int j = 0; j < img2.cols; j++)
+		{
+			img2.at<float>(i, j) = img2.at<float>(i, j) * pow(-1, i + j);
+
+		}
+	}
+	normalize(img2, img2, 0, 1, NORM_MINMAX); 
+	Mat img3(img2.rows, img2.cols, CV_8UC1);
+	for (int i = 0; i < img2.rows; i++)
+	{
+		for (int j = 0; j < img2.cols; j++)
+		{
+			img3.at<uchar>(i, j) = img2.at<float>(i, j) * 255;
+		}
+	}
+	//高斯噪声
+	Mat img4 = img3.clone();
+	RNG rng;
+	randn(img4, 0, 10);
+	add(img3, img4, img3);
+	
+	imwrite("F://image1.tif", img3);
+	imshow("image", img3);
+	wiener(img3,h,0.01);
+	waitKey();
+	return 0;
+}
+void wiener(Mat img1, Mat img2, double k)//维纳滤波
+{
+
+	for (int i = 0; i < img1.rows; i++)
+	{
+		for (int j = 0; j < img1.cols; j++)
+		{
+			img1.at<uchar>(i, j) = img1.at<uchar>(i, j) * pow(-1, i + j);
+
+		}
+	}
+	Mat plane[] = { Mat_<float>(img1), Mat::zeros(img1.size(), CV_32F) };
+	merge(plane, 2, img1);
+	dft(img1, img1);
+	split(img2, plane);
+	Mat H(img2.size(), CV_64FC1);
+	magnitude(plane[0], plane[1], H);
+
+	Mat S(img2.size(), CV_32FC2);
+
+	for (int m = 0; m < img1.rows; m++)
+	{
+		for (int n = 0; n < img1.cols; n++)
+		{
+			S.at<Vec2f>(m, n)[0] = img2.at<Vec2f>(m, n)[0] / (pow(H.at<float>(m, n), 2) + k);
+			S.at<Vec2f>(m, n)[1] = img2.at<Vec2f>(m, n)[1] / (pow(H.at<float>(m, n), 2) + k)*(-1);
+		}
+	}
+
+
+	Mat f(img1.size(), CV_32FC2);
+
+	for (int r = 0; r < img1.rows; r++)
+	{
+		for (int t = 0; t < img1.cols; t++)
+		{
+			f.at<Vec2f>(r, t)[0] = img1.at<Vec2f>(r, t)[0] * S.at<Vec2f>(r, t)[0] - img1.at<Vec2f>(r, t)[1] * S.at<Vec2f>(r, t)[1];
+			f.at<Vec2f>(r, t)[1] = img1.at<Vec2f>(r, t)[0] * S.at<Vec2f>(r, t)[1] + img1.at<Vec2f>(r, t)[1] * S.at<Vec2f>(r, t)[0];
+		}
+	}
+
+	//傅里叶逆变换
+	idft(f, f);
+	split(f, plane);
+	Mat img4 = plane[0];
+
+	for (int i = 0; i < img4.rows; i++)
+	{
+		for (int j = 0; j < img4.cols; j++)
+		{
+			img4.at<float>(i, j) = img4.at<float>(i, j) * pow(-1, i + j);
+
+		}
+	}
+
+	normalize(img4, img4, 0, 1, NORM_MINMAX);
+	Mat img5(img4.rows, img4.cols, CV_8UC1);
+	for (int i = 0; i < img5.rows; i++)
+	{
+		for (int j = 0; j < img5.cols; j++)
+		{
+			img5.at<uchar>(i, j) = img4.at<float>(i, j) * 255;
+		}
+	}
+	imwrite("F://image2.tif", img5);
+	imshow("image after", img5);
+}
